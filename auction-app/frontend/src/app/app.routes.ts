@@ -5,6 +5,8 @@ import { AuctionLiveComponent } from './pages/auction-live/auction-live.componen
 import { CaptainDashboardComponent } from './pages/captain-dashboard/captain-dashboard.component';
 import { AdminDashboardComponent } from './pages/admin-dashboard/admin-dashboard.component';
 import { PlayerRegistrationComponent } from './pages/player-registration/player-registration.component';
+import { PlayerListComponent } from './pages/player-list/player-list.component';
+import { PlayerRegisterComponent } from './pages/player-register/player-register.component';
 import { AuthGuard } from './guards/auth.guard';
 import { RoleGuard } from './guards/role.guard';
 
@@ -36,6 +38,16 @@ export const routes: Routes = [
   { 
     path: 'player-registration', 
     component: PlayerRegistrationComponent
+  },
+  { 
+    path: 'manage-players/:tournamentId', 
+    component: PlayerListComponent,
+    canActivate: [AuthGuard, RoleGuard],
+    data: { roles: ['SUPER_ADMIN'] }
+  },
+  { 
+    path: 'player-register/:tournamentId', 
+    component: PlayerRegisterComponent
   },
   { path: '**', redirectTo: '/login' }
 ];

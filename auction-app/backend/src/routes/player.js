@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const AuctionPlayer = require('../models/AuctionPlayer');
 const Tournament = require('../models/Tournament');
 const TournamentTeam = require('../models/TournamentTeam');
@@ -6,6 +7,117 @@ const { auth, isSuperAdmin, isCaptain, isPlayer } = require('../middleware/auth'
 const { validate, schemas } = require('../middleware/validation');
 
 const router = express.Router();
+
+// Configure multer for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Check file type
+    if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPEG and PNG images are allowed'), false);
+    }
+  }
+});
+
+// Public player registration route (no auth required) - Updated for FormData
+router.post('/register', upload.single('profileImage'), async (req, res) => {
+  try {
+    const tournament = await Tournament.findById(req.body.tournament);
+    
+    if (!tournament) {
+      return res.status(404).json({ error: 'Tournament not found' });
+    }
+
+    if (tournament.status === 'COMPLETED') {
+      return res.status(400).json({ error: 'Cannot register players for completed tournament' });
+    }
+
+    // Auto-assign auction order for public registrations
+    const lastPlayer = await AuctionPlayer.findOne({ tournament: req.body.tournament })
+      .sort({ auctionOrder: -1 });
+    
+    const auctionOrder = lastPlayer ? lastPlayer.auctionOrder + 1 : 1;
+
+    // Handle profile image
+    let profileImage = '';
+    if (req.file) {
+      // Convert buffer to base64
+      profileImage = req.file.buffer.toString('base64');
+    }
+
+    // Parse statistics from FormData
+    console.log('Request body:', req.body);
+    
+    const age = parseInt(req.body['statistics[age]']);
+    const statistics = {
+      age: isNaN(age) ? 0 : age, // Default to 0 if invalid
+      handedness: req.body['statistics[handedness]'] || 'Righty'
+    };
+
+    console.log('Parsed statistics:', statistics);
+
+    const playerData = {
+      name: req.body.name,
+      role: req.body.role,
+      basePrice: parseInt(req.body.basePrice) || 100,
+      profileImage: profileImage,
+      tournament: req.body.tournament,
+      statistics: statistics,
+      auctionOrder: auctionOrder
+      // Removed createdBy entirely since it's optional
+    };
+
+    console.log('Player data:', playerData);
+
+    const player = new AuctionPlayer(playerData);
+    await player.save();
+
+    const populatedPlayer = await AuctionPlayer.findById(player._id)
+      .populate('tournament', 'name');
+
+    res.status(201).json({
+      message: 'Player registered successfully',
+      player: populatedPlayer
+    });
+  } catch (error) {
+    console.error('Public player registration error:', error);
+    res.status(500).json({ error: 'Failed to register player' });
+  }
+});
+
+// Public route to get tournament details for registration page
+router.get('/tournament/:tournamentId/public', async (req, res) => {
+  try {
+    const tournament = await Tournament.findById(req.params.tournamentId);
+    
+    if (!tournament) {
+      return res.status(404).json({ error: 'Tournament not found' });
+    }
+
+    // Only allow registration for tournaments that are not completed
+    if (tournament.status === 'COMPLETED') {
+      return res.status(400).json({ error: 'Registration is closed for this tournament' });
+    }
+
+    res.json({ 
+      tournament: {
+        _id: tournament._id,
+        name: tournament.name,
+        description: tournament.description,
+        status: tournament.status
+      }
+    });
+  } catch (error) {
+    console.error('Get public tournament error:', error);
+    res.status(500).json({ error: 'Failed to fetch tournament details' });
+  }
+});
 
 router.get('/tournament/:tournamentId', auth, isPlayer, async (req, res) => {
   try {

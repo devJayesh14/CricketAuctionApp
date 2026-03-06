@@ -55,6 +55,13 @@ export class AuctionService {
     );
   }
 
+  getPlayer(playerId: string): Observable<{ player: AuctionPlayer }> {
+    return this.http.get<{ player: AuctionPlayer }>(
+      `${this.apiUrl}/players/${playerId}`,
+      { headers: this.authService.getAuthHeaders() }
+    );
+  }
+
   getAuctionState(tournamentId: string): Observable<{ auctionState: AuctionState }> {
     return this.http.get<{ auctionState: AuctionState }>(
       `${this.apiUrl}/auction/state/${tournamentId}`,
@@ -135,6 +142,37 @@ export class AuctionService {
     return this.http.delete(
       `${this.apiUrl}/players/${id}`,
       { headers: this.authService.getAuthHeaders() }
+    );
+  }
+
+  // Auction Control Methods
+  startAuctionControl(tournamentId: string) {
+    return this.http.post(`${this.apiUrl}/tournaments/${tournamentId}/start-auction`, {});
+  }
+
+  pauseAuctionControl(tournamentId: string) {
+    return this.http.post(`${this.apiUrl}/tournaments/${tournamentId}/pause-auction`, {});
+  }
+
+  resumeAuctionControl(tournamentId: string) {
+    return this.http.post(`${this.apiUrl}/tournaments/${tournamentId}/resume-auction`, {});
+  }
+
+  nextPlayerControl(tournamentId: string) {
+    return this.http.post(`${this.apiUrl}/tournaments/${tournamentId}/next-player`, {});
+  }
+
+  // Public registration methods (no auth required)
+  getPublicTournament(tournamentId: string): Observable<{ tournament: any }> {
+    return this.http.get<{ tournament: any }>(
+      `${this.apiUrl}/players/tournament/${tournamentId}/public`
+    );
+  }
+
+  registerPlayerPublic(playerData: any): Observable<any> {
+    return this.http.post(
+      `${this.apiUrl}/players/register`,
+      playerData
     );
   }
 }

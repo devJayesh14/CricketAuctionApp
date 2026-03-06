@@ -3,18 +3,11 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { IonicModule, AlertController, ToastController, LoadingController } from '@ionic/angular';
 import { ActivatedRoute, Router } from '@angular/router';
-import { Subscription, interval } from 'rxjs';
+import { Subscription } from 'rxjs';
 import { AuctionService } from '../../services/auction.service';
-import { SocketService, TimerEvent } from '../../services/socket.service';
+import { SocketService } from '../../services/socket.service';
 import { AuthService } from '../../services/auth.service';
-import { 
-  AuctionState, 
-  BidEvent, 
-  PlayerSoldEvent, 
-  QuickBidAmount 
-} from '../../models/bid.model';
 import { AuctionPlayer } from '../../models/player.model';
-import { TournamentTeam } from '../../models/tournament.model';
 
 @Component({
   selector: 'app-auction-live',
@@ -45,459 +38,321 @@ import { TournamentTeam } from '../../models/tournament.model';
 
       <!-- Auction Status Bar -->
       <div class="auction-status" 
-           [ngClass]="{ 'active': auctionState?.isAuctionActive, 'paused': auctionState?.isPaused }">
+           [ngClass]="{ 
+             'active': tournament?.auctionStatus === 'STARTED', 
+             'paused': tournament?.auctionStatus === 'PAUSED',
+             'not-started': tournament?.auctionStatus === 'NOT_STARTED',
+             'completed': tournament?.auctionStatus === 'COMPLETED'
+           }">
         <div class="status-content">
           <div class="status-indicator"></div>
           <span class="status-text">
-            {{ auctionState?.isAuctionActive ? (auctionState?.isPaused ? 'PAUSED' : 'LIVE') : 'WAITING' }}
-          </span>
-          <span class="progress-text" *ngIf="auctionState">
-            {{ auctionState.soldPlayers }} / {{ auctionState.totalPlayers }} Players
+            {{ getStatusText(tournament?.auctionStatus) }}
           </span>
         </div>
       </div>
 
-      <!-- Current Player Section -->
-      <ion-card *ngIf="currentPlayer" class="player-card">
-        <ion-card-header>
-          <ion-card-title>Current Player</ion-card-title>
-          <ion-card-subtitle>Player #{{ currentPlayer.auctionOrder }}</ion-card-subtitle>
-        </ion-card-header>
-        
-        <ion-card-content>
-          <div class="player-info">
-            <ion-avatar class="player-avatar">
-              <img *ngIf="currentPlayer.profileImage" 
-                   [src]="currentPlayer.profileImage" 
-                   [alt]="currentPlayer.name"
-                   (error)="onImageError($event)">
-              <ion-icon *ngIf="!currentPlayer.profileImage" name="person-outline"></ion-icon>
-            </ion-avatar>
-            
-            <div class="player-details">
-              <h3>{{ currentPlayer.name }}</h3>
-              <ion-chip [color]="getPlayerRoleColor(currentPlayer.role)">
-                {{ currentPlayer.role }}
-              </ion-chip>
-              
-              <div class="player-stats" *ngIf="currentPlayer.statistics">
-                <div class="stat-item" *ngIf="currentPlayer.statistics.age">
-                  <small>Age</small>
-                  <strong>{{ currentPlayer.statistics.age }}</strong>
-                </div>
-                <div class="stat-item" *ngIf="currentPlayer.statistics.matches">
-                  <small>Matches</small>
-                  <strong>{{ currentPlayer.statistics.matches }}</strong>
-                </div>
-                <div class="stat-item" *ngIf="currentPlayer.statistics.average">
-                  <small>Avg</small>
-                  <strong>{{ currentPlayer.statistics.average }}</strong>
-                </div>
-                <div class="stat-item" *ngIf="currentPlayer.statistics.economy">
-                  <small>Econ</small>
-                  <strong>{{ currentPlayer.statistics.economy }}</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="price-info">
-            <div class="price-card base-price">
-              <small>Base Price</small>
-              <strong>₹{{ currentPlayer.basePrice.toLocaleString() }}</strong>
-            </div>
-            <div class="price-card current-bid">
-              <small>Current Bid</small>
-              <strong>₹{{ (auctionState?.currentBid || currentPlayer.basePrice).toLocaleString() }}</strong>
-            </div>
-          </div>
-        </ion-card-content>
-      </ion-card>
-
-      <!-- Timer Section -->
-      <ion-card *ngIf="auctionState?.isAuctionActive && !auctionState?.isPaused" class="timer-card">
-        <ion-card-content>
-          <div class="timer-display">
-            <div class="timer-circle" 
-                 [ngClass]="{ 
-                   'warning': timeLeft <= 10 && timeLeft > 5, 
-                   'danger': timeLeft <= 5,
-                   'expired': timeLeft === 0
-                 }">
-              <span class="timer-text">{{ timeLeft }}</span>
-              <small class="timer-label">SEC</small>
-            </div>
-            <div class="timer-info">
-              <h4>Time Remaining</h4>
-              <p *ngIf="currentBidder" class="last-bid-info">
-                Last bid by <strong>{{ currentBidder.team?.name }}</strong>
-              </p>
-              <p *ngIf="!currentBidder" class="no-bid-info">
-                No bids yet
-              </p>
-            </div>
-          </div>
-        </ion-card-content>
-      </ion-card>
-
-      <!-- Bidding Controls -->
-      <div *ngIf="canBid && auctionState?.isAuctionActive && !auctionState?.isPaused" class="bidding-controls">
-        <ion-card>
-          <ion-card-header>
-            <ion-card-title>Place Your Bid</ion-card-title>
-            <ion-card-subtitle>Remaining Purse: ₹{{ remainingPurse.toLocaleString() }}</ion-card-subtitle>
-          </ion-card-header>
-          
-          <ion-card-content>
-            <form (ngSubmit)="placeBid()">
-              <ion-item>
-                <ion-label position="stacked">Bid Amount</ion-label>
-                <ion-input
-                  type="number"
-                  [(ngModel)]="bidAmount"
-                  name="bidAmount"
-                  [min]="minBid"
-                  [max]="remainingPurse"
-                  placeholder="Enter bid amount"
-                ></ion-input>
-              </ion-item>
-
-              <div class="quick-bids">
-                <ion-chip *ngFor="let quickBid of quickBidAmounts" 
-                          (click)="setQuickBid(quickBid.amount)"
-                          [disabled]="quickBid.amount > remainingPurse || quickBid.amount < minBid"
-                          [color]="quickBid.color">
-                  +₹{{ quickBid.amount.toLocaleString() }}
-                </ion-chip>
-              </div>
-
-              <ion-button
-                expand="block"
-                type="submit"
-                [disabled]="!bidAmount || bidAmount <= minBid || bidAmount > remainingPurse || isPlacingBid || timeLeft === 0"
-                class="ion-margin-top"
-                color="success"
-              >
-                <ion-spinner name="crescent" *ngIf="isPlacingBid"></ion-spinner>
-                <span *ngIf="!isPlacingBid">Place Bid</span>
-              </ion-button>
-            </form>
-          </ion-card-content>
-        </ion-card>
-      </div>
-
       <!-- Admin Controls -->
-      <div *ngIf="authService.isSuperAdmin" class="admin-controls">
-        <ion-card>
+      <div class="admin-controls" *ngIf="authService.isSuperAdmin">
+        <div class="controls-header">
+          <h3>Auction Controls</h3>
+        </div>
+        <div class="control-buttons">
+          <ion-button 
+            *ngIf="tournament?.auctionStatus === 'NOT_STARTED'" 
+            (click)="startAuction()" 
+            color="success"
+            expand="block"
+          >
+            <ion-icon name="play-outline" slot="start"></ion-icon>
+            Start Auction
+          </ion-button>
+          
+          <ion-button 
+            *ngIf="tournament?.auctionStatus === 'STARTED'" 
+            (click)="pauseAuction()" 
+            color="warning"
+            expand="block"
+          >
+            <ion-icon name="pause-outline" slot="start"></ion-icon>
+            Pause Auction
+          </ion-button>
+          
+          <ion-button 
+            *ngIf="tournament?.auctionStatus === 'PAUSED'" 
+            (click)="resumeAuction()" 
+            color="success"
+            expand="block"
+          >
+            <ion-icon name="play-outline" slot="start"></ion-icon>
+            Resume Auction
+          </ion-button>
+          
+          <ion-button 
+            *ngIf="tournament?.auctionStatus === 'STARTED'" 
+            (click)="nextPlayer()" 
+            color="primary"
+            expand="block"
+          >
+            <ion-icon name="arrow-forward-outline" slot="start"></ion-icon>
+            Next Player
+          </ion-button>
+        </div>
+      </div>
+
+      <!-- Current Player Info -->
+      <div class="current-player-section" *ngIf="currentPlayer">
+        <div class="player-header">
+          <h2>Current Player</h2>
+        </div>
+        
+        <ion-card class="player-card">
           <ion-card-header>
-            <ion-card-title>Auction Controls</ion-card-title>
+            <div class="player-info-header">
+              <div class="player-avatar">
+                <img [src]="getPlayerImageUrl(currentPlayer.profileImage ?? '')" 
+                     [alt]="currentPlayer.name" 
+                     onerror="this.src='assets/default-avatar.png'">
+              </div>
+              <div class="player-details">
+                <ion-card-title>{{ currentPlayer.name }}</ion-card-title>
+                <ion-card-subtitle>{{ currentPlayer.role }}</ion-card-subtitle>
+                <div class="player-stats">
+                  <span class="stat">{{ getPlayerAge(currentPlayer) }} years</span>
+                  <span class="stat">{{ currentPlayer.statistics?.handedness }}</span>
+                </div>
+              </div>
+            </div>
           </ion-card-header>
           
           <ion-card-content>
-            <ion-button
-              expand="block"
-              *ngIf="!auctionState?.isAuctionActive"
-              (click)="startAuction()"
-              color="success"
-              [disabled]="isLoading"
-            >
-              <ion-spinner name="crescent" *ngIf="isLoading"></ion-spinner>
-              <ion-icon name="play-outline" slot="start" *ngIf="!isLoading"></ion-icon>
-              <span *ngIf="!isLoading">Start Auction</span>
-            </ion-button>
-
-            <div class="auction-stats">
-              <div class="stat-row">
-                <span>Players Sold:</span>
-                <strong>{{ auctionState?.soldPlayers || 0 }} / {{ auctionState?.totalPlayers || 0 }}</strong>
+            <div class="player-bid-info">
+              <div class="base-price">
+                <small>Base Price</small>
+                <h3>₹{{ currentPlayer.basePrice.toLocaleString() }}</h3>
               </div>
-              <div class="stat-row">
-                <span>Status:</span>
-                <strong>
-                  {{ auctionState?.isAuctionActive ? 'In Progress' : 'Not Started' }}
-                </strong>
+              
+              <div class="current-bid" *ngIf="currentBid">
+                <small>Current Bid</small>
+                <h3>₹{{ currentBid.amount.toLocaleString() }}</h3>
+                <p class="bid-team">{{ getBidderTeamName(currentBid.bidder) }}</p>
               </div>
-              <div class="stat-row" *ngIf="tournament">
-                <span>Tournament:</span>
-                <strong>{{ tournament.name }}</strong>
+              
+              <div class="no-bids" *ngIf="!currentBid && tournament?.auctionStatus === 'STARTED'">
+                <small>No bids yet</small>
+                <h3>₹{{ currentPlayer.basePrice.toLocaleString() }}</h3>
               </div>
             </div>
           </ion-card-content>
         </ion-card>
       </div>
 
-      <!-- View Only Message -->
-      <div *ngIf="!canBid && authService.currentUser?.role === 'PLAYER'" class="view-only">
+      <!-- Waiting for auction to start -->
+      <div class="waiting-section" *ngIf="!currentPlayer && tournament?.auctionStatus === 'NOT_STARTED'">
         <ion-card>
-          <ion-card-content>
-            <h3>
-              <ion-icon name="eye-outline"></ion-icon>
-              View Only Mode
-            </h3>
-            <p>You are watching this auction as a viewer. Only captains can participate in bidding.</p>
+          <ion-card-content class="ion-text-center">
+            <ion-icon name="time-outline" size="large" color="medium"></ion-icon>
+            <h2>Auction Not Started</h2>
+            <p>Waiting for the administrator to start the auction...</p>
           </ion-card-content>
         </ion-card>
       </div>
 
       <!-- Bid History -->
-      <ion-card *ngIf="recentBids.length > 0" class="bid-history">
-        <ion-card-header>
-          <ion-card-title>Recent Bids</ion-card-title>
-        </ion-card-header>
-        
-        <ion-card-content>
-          <div class="bid-list">
-            <div *ngFor="let bid of recentBids.slice().reverse()" class="bid-item">
-              <span class="bid-team">{{ bid.bidder.team?.name }}</span>
-              <span class="bid-amount">₹{{ bid.amount.toLocaleString() }}</span>
+      <div class="bid-history" *ngIf="bidHistory.length > 0">
+        <h3>Bid History</h3>
+        <ion-list>
+          <ion-item *ngFor="let bid of bidHistory.slice().reverse()">
+            <div class="bid-item">
+              <div class="bid-info">
+                <strong>₹{{ bid.amount.toLocaleString() }}</strong>
+                <span class="bid-team">{{ getBidderTeamName(bid.bidder) }}</span>
+              </div>
+              <div class="bid-time">
+                <small>{{ formatTime(bid.timestamp) }}</small>
+              </div>
             </div>
-          </div>
-        </ion-card-content>
-      </ion-card>
+          </ion-item>
+        </ion-list>
+      </div>
     </ion-content>
   `,
   styles: [`
     .connection-status {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 1rem;
-      font-size: 0.8rem;
-      font-weight: bold;
-    }
-
-    .connection-status.connected {
-      background: var(--ion-color-success);
-      color: white;
-    }
-
-    .connection-status.disconnected {
-      background: var(--ion-color-warning);
-      color: white;
+      padding: 8px 16px;
+      background: var(--ion-color-light);
+      border-bottom: 1px solid var(--ion-color-light-shade);
     }
 
     .status-indicator {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: currentColor;
-      animation: pulse 2s infinite;
+      margin-right: 8px;
     }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
+    .connected .status-indicator {
+      background: #10b981;
+    }
+
+    .disconnected .status-indicator {
+      background: #ef4444;
     }
 
     .auction-status {
-      padding: 1rem;
-      background: var(--ion-color-light);
-      border-bottom: 1px solid var(--ion-color-light-shade);
+      padding: 12px 16px;
+      border-bottom: 2px solid;
     }
 
     .auction-status.active {
-      background: linear-gradient(90deg, var(--ion-color-success), var(--ion-color-success-tint));
+      background: #10b981;
       color: white;
+      border-color: #059669;
     }
 
     .auction-status.paused {
-      background: linear-gradient(90deg, var(--ion-color-warning), var(--ion-color-warning-tint));
+      background: #f59e0b;
       color: white;
+      border-color: #d97706;
+    }
+
+    .auction-status.not-started {
+      background: #6b7280;
+      color: white;
+      border-color: #4b5563;
+    }
+
+    .auction-status.completed {
+      background: #8b5cf6;
+      color: white;
+      border-color: #7c3aed;
     }
 
     .status-content {
       display: flex;
       align-items: center;
-      justify-content: space-between;
     }
 
     .status-text {
-      font-weight: bold;
-      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .admin-controls {
+      padding: 16px;
+      background: var(--ion-color-light);
+      margin: 16px;
+      border-radius: 8px;
+    }
+
+    .controls-header h3 {
+      margin: 0 0 12px 0;
+      color: var(--ion-color-dark);
+    }
+
+    .control-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .current-player-section {
+      padding: 16px;
+    }
+
+    .player-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .player-header h2 {
+      margin: 0;
+      color: var(--ion-color-dark);
     }
 
     .player-card {
-      margin: 1rem;
+      margin: 0;
     }
 
-    .player-info {
+    .player-info-header {
       display: flex;
-      gap: 1rem;
-      align-items: flex-start;
-      margin-bottom: 1rem;
-    }
-
-    .player-avatar {
-      width: 80px;
-      height: 80px;
-      flex-shrink: 0;
+      align-items: center;
+      gap: 16px;
     }
 
     .player-avatar img {
-      width: 100%;
-      height: 100%;
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
       object-fit: cover;
+      border: 3px solid var(--ion-color-primary);
     }
 
-    .player-details h3 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1.2rem;
-      font-weight: bold;
+    .player-details {
+      flex: 1;
     }
 
     .player-stats {
       display: flex;
-      gap: 1rem;
-      margin-top: 0.5rem;
-      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 8px;
     }
 
-    .stat-item {
-      text-align: center;
-      min-width: 50px;
+    .stat {
+      background: var(--ion-color-light);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.875rem;
     }
 
-    .stat-item small {
-      display: block;
-      color: var(--ion-color-medium);
-      font-size: 0.7rem;
-    }
-
-    .stat-item strong {
-      display: block;
-      font-size: 0.9rem;
-    }
-
-    .price-info {
+    .player-bid-info {
       display: flex;
-      gap: 1rem;
-      margin-top: 1rem;
+      justify-content: space-around;
+      text-align: center;
     }
 
-    .price-card {
+    .base-price, .current-bid, .no-bids {
       flex: 1;
-      text-align: center;
-      padding: 1rem;
-      border-radius: 8px;
-      background: var(--ion-color-light);
     }
 
-    .price-card.current-bid {
-      background: linear-gradient(135deg, var(--ion-color-primary), var(--ion-color-primary-tint));
-      color: white;
+    .base-price h3, .current-bid h3, .no-bids h3 {
+      margin: 4px 0;
+      color: var(--ion-color-dark);
     }
 
-    .price-card small {
-      display: block;
-      font-size: 0.8rem;
-      margin-bottom: 0.25rem;
+    .current-bid h3 {
+      color: var(--ion-color-primary);
     }
 
-    .price-card strong {
-      font-size: 1.5rem;
-      font-weight: bold;
-    }
-
-    .timer-card {
-      margin: 1rem;
-    }
-
-    .timer-display {
-      display: flex;
-      align-items: center;
-      gap: 1.5rem;
-    }
-
-    .timer-circle {
-      width: 100px;
-      height: 100px;
-      border-radius: 50%;
-      background: var(--ion-color-success);
-      color: white;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      font-weight: bold;
-      position: relative;
-      flex-shrink: 0;
-    }
-
-    .timer-circle.warning {
-      background: var(--ion-color-warning);
-      animation: pulse 1s infinite;
-    }
-
-    .timer-circle.danger {
-      background: var(--ion-color-danger);
-      animation: pulse 0.5s infinite;
-    }
-
-    .timer-circle.expired {
-      background: var(--ion-color-medium);
-      animation: none;
-    }
-
-    .timer-text {
-      font-size: 2.5rem;
-      line-height: 1;
-    }
-
-    .timer-label {
-      font-size: 0.6rem;
-      position: absolute;
-      bottom: 8px;
-    }
-
-    .timer-info h4 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1.1rem;
-    }
-
-    .last-bid-info, .no-bid-info {
-      margin: 0;
+    .bid-team {
+      margin: 4px 0 0 0;
       color: var(--ion-color-medium);
+      font-size: 0.875rem;
     }
 
-    .bidding-controls, .admin-controls, .view-only {
-      margin: 1rem;
-    }
-
-    .quick-bids {
-      display: flex;
-      gap: 0.5rem;
-      margin: 1rem 0;
-      flex-wrap: wrap;
-    }
-
-    .auction-stats {
-      background: var(--ion-color-light);
-      padding: 1rem;
-      border-radius: 8px;
-      margin-top: 1rem;
-    }
-
-    .stat-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin: 0.5rem 0;
+    .waiting-section {
+      padding: 32px 16px;
+      text-align: center;
     }
 
     .bid-history {
-      margin: 1rem;
+      padding: 16px;
     }
 
-    .bid-list {
-      max-height: 200px;
-      overflow-y: auto;
+    .bid-history h3 {
+      margin: 0 0 16px 0;
+      color: var(--ion-color-dark);
     }
 
     .bid-item {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.5rem;
+      width: 100%;
+      padding: 8px 0;
       border-bottom: 1px solid var(--ion-color-light);
     }
 
@@ -505,50 +360,29 @@ import { TournamentTeam } from '../../models/tournament.model';
       border-bottom: none;
     }
 
-    .bid-team {
-      font-weight: 500;
+    .bid-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
 
-    .bid-amount {
-      font-weight: bold;
-      color: var(--ion-color-primary);
-    }
-
-    @media (max-width: 768px) {
-      .player-info {
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-      }
-
-      .timer-display {
-        flex-direction: column;
-        text-align: center;
-      }
-
-      .price-info {
-        flex-direction: column;
-      }
+    .bid-time {
+      color: var(--ion-color-medium);
     }
   `]
 })
 export class AuctionLiveComponent implements OnInit, OnDestroy {
   tournamentId: string = '';
-  auctionState: AuctionState | null = null;
-  currentPlayer: AuctionPlayer | null = null;
-  currentBidder: any = null;
   tournament: any = null;
-  tournamentTeam: TournamentTeam | null = null;
-  remainingPurse: number = 0;
-  timeLeft: number = 20;
-  bidAmount: number = 0;
-  isPlacingBid: boolean = false;
-  isLoading: boolean = false;
+  currentPlayer: AuctionPlayer | null = null;
+  auctionState: any = null;
+  bidHistory: any[] = [];
+  currentBid: any = null;
+  timeLeft: number = 0;
   isConnected: boolean = false;
+  isSubscribed: boolean = false;
 
   private subscriptions: Subscription[] = [];
-  private timerInterval: any;
-  recentBids: BidEvent[] = [];
 
   constructor(
     private route: ActivatedRoute,
@@ -569,232 +403,94 @@ export class AuctionLiveComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.initializeAuction();
+    this.loadTournamentData();
+    this.initializeSocketConnection();
   }
 
   ngOnDestroy() {
     this.cleanup();
   }
 
-  async initializeAuction() {
-    const loading = await this.loadingController.create({
-      message: 'Connecting to auction...'
-    });
-    await loading.present();
-
+  private async loadTournamentData() {
     try {
-      // Connect to socket
-      this.socketService.connect();
+      const response: any = await this.auctionService.getTournament(this.tournamentId).toPromise();
+      this.tournament = response.tournament;
       
-      // Join tournament room
-      this.socketService.joinTournament(this.tournamentId);
-
-      // Set up subscriptions
-      this.setupSubscriptions();
-
-      // Load initial data
-      await this.loadInitialData();
+      // Load current player if auction is active
+      if (this.tournament.currentAuctionState?.currentPlayerId) {
+        await this.loadCurrentPlayer();
+      }
       
-      // Start timer updates
-      this.startTimerUpdates();
-
+      this.cdr.detectChanges();
     } catch (error) {
-      console.error('Error initializing auction:', error);
-      this.showToast('Failed to connect to auction', 'danger');
-    } finally {
-      await loading.dismiss();
+      console.error('Failed to load tournament:', error);
+      this.showToast('Failed to load tournament data', 'danger');
     }
   }
 
-  private setupSubscriptions() {
-    // Auction state updates
+  private async loadCurrentPlayer() {
+    try {
+      const response: any = await this.auctionService.getPlayer(
+        this.tournament.currentAuctionState.currentPlayerId
+      ).toPromise();
+      this.currentPlayer = response.player;
+      this.cdr.detectChanges();
+    } catch (error) {
+      console.error('Failed to load current player:', error);
+    }
+  }
+
+  private initializeSocketConnection() {
+    this.socketService.connect();
+    
+    // Listen for auction events
     this.subscriptions.push(
-      this.socketService.getAuctionState().subscribe(state => {
+      this.socketService.auctionState$.subscribe((state) => {
         this.auctionState = state;
-        this.currentPlayer = state?.currentPlayer || null;
-        this.currentBidder = state?.currentBidder || null;
-        this.updateBidAmount();
         this.cdr.detectChanges();
       })
     );
 
-    // Timer updates
     this.subscriptions.push(
-      this.socketService.getTimer().subscribe(timerEvent => {
-        if (timerEvent) {
-          this.timeLeft = timerEvent.timeLeft;
+      this.socketService.bidPlaced$.subscribe((bid) => {
+        this.handleBidEvent(bid);
+      })
+    );
+
+    this.subscriptions.push(
+      this.socketService.playerSold$.subscribe((event) => {
+        this.handlePlayerSoldEvent(event);
+      })
+    );
+
+    this.subscriptions.push(
+      this.socketService.timer$.subscribe((event) => {
+        if (event) {
+          this.timeLeft = event.timeLeft;
           this.cdr.detectChanges();
         }
       })
     );
 
-    // Connection status
-    this.subscriptions.push(
-      this.socketService.getConnectionStatus().subscribe(connected => {
-        this.isConnected = connected;
-        this.cdr.detectChanges();
-      })
-    );
-
-    // Bid placed events
-    this.subscriptions.push(
-      this.socketService.getBidPlacedEvents().subscribe(bidEvent => {
-        this.recentBids.push(bidEvent);
-        if (this.recentBids.length > 10) {
-          this.recentBids.shift(); // Keep only last 10 bids
-        }
-        this.showToast(`Bid placed: ₹${bidEvent.amount.toLocaleString()}`, 'success');
-        this.cdr.detectChanges();
-      })
-    );
-
-    // Player sold events
-    this.subscriptions.push(
-      this.socketService.getPlayerSoldEvents().subscribe(event => {
-        const message = event.soldTo 
-          ? `${event.player.name} sold for ₹${event.soldPrice.toLocaleString()}`
-          : `${event.player.name} was not sold`;
-        this.showToast(message, 'primary');
-        this.cdr.detectChanges();
-      })
-    );
-
-    // Auction ended events
-    this.subscriptions.push(
-      this.socketService.getAuctionEndedEvents().subscribe(event => {
-        this.showToast(event.message, 'success');
-        this.showAuctionCompleteDialog();
-        this.cdr.detectChanges();
-      })
-    );
+    // Join auction room
+    this.socketService.joinTournament(this.tournamentId);
+    this.isSubscribed = true;
   }
 
-  private async loadInitialData() {
-    try {
-      // Load tournament data
-      const tournamentResponse = await this.auctionService.getTournament(this.tournamentId).toPromise();
-      this.tournament = tournamentResponse?.tournament;
-
-      // Load user's team data if captain
-      if (this.authService.isCaptain) {
-        const teamResponse = await this.auctionService.getMyBids(this.tournamentId).toPromise();
-        this.tournamentTeam = teamResponse?.tournamentTeam || null;
-        this.remainingPurse = this.tournamentTeam?.remainingPurse || 0;
-      }
-
-    } catch (error) {
-      console.error('Error loading initial data:', error);
-      this.showToast('Failed to load auction data', 'danger');
+  private cleanup() {
+    if (this.isSubscribed) {
+      this.socketService.leaveTournament(this.tournamentId);
+      this.isSubscribed = false;
     }
-  }
-
-  private startTimerUpdates() {
-    // Update timer every second
-    this.timerInterval = interval(1000).subscribe(() => {
-      if (this.auctionState?.isAuctionActive && !this.auctionState?.isPaused) {
-        this.timeLeft = this.socketService.getTimeLeft();
-        this.cdr.detectChanges();
-      }
-    });
-  }
-
-  get canBid(): boolean {
-    return this.socketService.canBid() && this.remainingPurse > 0;
-  }
-
-  get minBid(): number {
-    return this.socketService.getMinimumBid();
-  }
-
-  get quickBidAmounts(): QuickBidAmount[] {
-    const base = this.minBid;
-    return [
-      { amount: base + 500, label: '+500', color: 'primary' },
-      { amount: base + 1000, label: '+1000', color: 'secondary' },
-      { amount: base + 2000, label: '+2000', color: 'tertiary' },
-      { amount: base + 5000, label: '+5000', color: 'success' }
-    ].filter(bid => bid.amount <= this.remainingPurse);
-  }
-
-  setQuickBid(amount: number) {
-    this.bidAmount = amount;
-  }
-
-  private updateBidAmount() {
-    if (!this.bidAmount && this.auctionState) {
-      this.bidAmount = this.minBid;
-    }
-  }
-
-  async placeBid() {
-    if (!this.bidAmount || this.bidAmount <= this.minBid || this.bidAmount > this.remainingPurse) {
-      this.showToast('Invalid bid amount', 'danger');
-      return;
-    }
-
-    if (this.timeLeft === 0) {
-      this.showToast('Bidding time has expired', 'warning');
-      return;
-    }
-
-    this.isPlacingBid = true;
-
-    try {
-      // Place bid via socket
-      this.socketService.placeBid(this.tournamentId, this.bidAmount);
-      
-      // Reset bid amount
-      this.bidAmount = this.minBid;
-      
-    } catch (error) {
-      console.error('Error placing bid:', error);
-      this.showToast('Failed to place bid', 'danger');
-    } finally {
-      this.isPlacingBid = false;
-      this.cdr.detectChanges();
-    }
-  }
-
-  async startAuction() {
-    if (!this.authService.isSuperAdmin) {
-      this.showToast('Access denied', 'danger');
-      return;
-    }
-
-    const alert = await this.alertController.create({
-      header: 'Start Auction',
-      message: 'Are you sure you want to start the auction? This will begin the live bidding process.',
-      buttons: [
-        {
-          text: 'Cancel',
-          role: 'cancel'
-        },
-        {
-          text: 'Start',
-          handler: async () => {
-            this.isLoading = true;
-            try {
-              this.socketService.startAuction(this.tournamentId);
-              this.showToast('Auction started successfully', 'success');
-            } catch (error) {
-              console.error('Error starting auction:', error);
-              this.showToast('Failed to start auction', 'danger');
-            } finally {
-              this.isLoading = false;
-              this.cdr.detectChanges();
-            }
-          }
-        }
-      ]
-    });
-
-    await alert.present();
+    
+    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.socketService.disconnect();
   }
 
   async leaveAuction() {
     const alert = await this.alertController.create({
       header: 'Leave Auction',
-      message: 'Are you sure you want to leave this auction?',
+      message: 'Are you sure you want to leave the live auction?',
       buttons: [
         {
           text: 'Cancel',
@@ -813,67 +509,163 @@ export class AuctionLiveComponent implements OnInit, OnDestroy {
     await alert.present();
   }
 
-  private async showAuctionCompleteDialog() {
-    const alert = await this.alertController.create({
-      header: 'Auction Complete',
-      message: 'The auction has been completed successfully!',
-      buttons: [
-        {
-          text: 'View Results',
-          handler: () => {
-            this.router.navigate(['/tournaments']);
-          }
-        }
-      ]
+  // Auction Control Methods (Admin only)
+  async startAuction() {
+    const loading = await this.loadingController.create({
+      message: 'Starting auction...',
+      spinner: 'crescent'
     });
+    await loading.present();
 
-    await alert.present();
-  }
-
-  getPlayerRoleColor(role: string): string {
-    switch (role) {
-      case 'Batsman': return 'primary';
-      case 'Bowler': return 'secondary';
-      case 'All-Rounder': return 'tertiary';
-      case 'Wicket-Keeper': return 'success';
-      default: return 'medium';
+    try {
+      const response: any = await this.auctionService.startAuctionControl(this.tournamentId).toPromise();
+      this.tournament = response.tournament;
+      this.currentPlayer = response.currentPlayer;
+      
+      await loading.dismiss();
+      this.showToast('Auction started successfully!', 'success');
+    } catch (error: any) {
+      await loading.dismiss();
+      this.showToast(error.error?.error || 'Failed to start auction', 'danger');
     }
   }
 
-  getStatusColor(status?: string): string {
+  async pauseAuction() {
+    const loading = await this.loadingController.create({
+      message: 'Pausing auction...',
+      spinner: 'crescent'
+    });
+    await loading.present();
+
+    try {
+      const response: any = await this.auctionService.pauseAuctionControl(this.tournamentId).toPromise();
+      this.tournament = response.tournament;
+      
+      await loading.dismiss();
+      this.showToast('Auction paused', 'success');
+    } catch (error: any) {
+      await loading.dismiss();
+      this.showToast(error.error?.error || 'Failed to pause auction', 'danger');
+    }
+  }
+
+  async resumeAuction() {
+    const loading = await this.loadingController.create({
+      message: 'Resuming auction...',
+      spinner: 'crescent'
+    });
+    await loading.present();
+
+    try {
+      const response: any = await this.auctionService.resumeAuctionControl(this.tournamentId).toPromise();
+      this.tournament = response.tournament;
+      
+      await loading.dismiss();
+      this.showToast('Auction resumed', 'success');
+    } catch (error: any) {
+      await loading.dismiss();
+      this.showToast(error.error?.error || 'Failed to resume auction', 'danger');
+    }
+  }
+
+  async nextPlayer() {
+    const loading = await this.loadingController.create({
+      message: 'Moving to next player...',
+      spinner: 'crescent'
+    });
+    await loading.present();
+
+    try {
+      const response: any = await this.auctionService.nextPlayerControl(this.tournamentId).toPromise();
+      this.tournament = response.tournament;
+      
+      if (response.isCompleted) {
+        await loading.dismiss();
+        const alert = await this.alertController.create({
+          header: 'Auction Completed!',
+          message: 'All players have been auctioned successfully!',
+          buttons: ['OK']
+        });
+        await alert.present();
+        this.router.navigate(['/tournaments']);
+        return;
+      }
+      
+      this.currentPlayer = response.currentPlayer;
+      this.currentBid = null;
+      this.bidHistory = [];
+      
+      await loading.dismiss();
+      this.showToast('Moved to next player', 'success');
+    } catch (error: any) {
+      await loading.dismiss();
+      this.showToast(error.error?.error || 'Failed to move to next player', 'danger');
+    }
+  }
+
+  private handleBidEvent(bid: any) {
+    this.currentBid = bid;
+    this.bidHistory.push(bid);
+    this.cdr.detectChanges();
+  }
+
+  private handlePlayerSoldEvent(event: any) {
+    this.showToast(`${event.player?.name || 'Player'} sold to ${event.team?.name || 'team'} for ₹${event.price || 0}`, 'success');
+    this.currentPlayer = null;
+    this.currentBid = null;
+    this.cdr.detectChanges();
+  }
+
+  // Helper Methods
+  getStatusText(status: string): string {
     switch (status) {
-      case 'SCHEDULED': return 'primary';
-      case 'IN_PROGRESS': return 'success';
-      case 'COMPLETED': return 'medium';
-      case 'CANCELLED': return 'danger';
-      default: return 'medium';
+      case 'NOT_STARTED': return 'Not Started';
+      case 'STARTED': return 'Live';
+      case 'PAUSED': return 'Paused';
+      case 'COMPLETED': return 'Completed';
+      default: return 'Unknown';
     }
   }
 
-  onImageError(event: any) {
-    event.target.src = 'assets/images/default-player.png';
+  getPlayerImageUrl(imageString: string): string {
+    if (!imageString) {
+      return 'assets/default-avatar.png';
+    }
+    
+    // Check if it's a base64 string
+    if (imageString.startsWith('data:image/') || imageString.length > 100) {
+      return `data:image/jpeg;base64,${imageString}`;
+    }
+    
+    // Check if it's already a complete URL
+    if (imageString.startsWith('http')) {
+      return imageString;
+    }
+    
+    // Otherwise, treat as base64
+    return `data:image/jpeg;base64,${imageString}`;
   }
 
-  async showToast(message: string, color: string = 'primary') {
+  getPlayerAge(player: AuctionPlayer): string {
+    return player.statistics?.age?.toString() || 'N/A';
+  }
+
+  getBidderTeamName(bidder: any): string {
+    return bidder.team?.name || bidder.username || 'Unknown';
+  }
+
+  formatTime(timestamp: any): string {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString();
+  }
+
+  private async showToast(message: string, color: string = 'primary') {
     const toast = await this.toastController.create({
       message,
       duration: 3000,
       color,
-      position: 'bottom'
+      position: 'top'
     });
     await toast.present();
-  }
-
-  private cleanup() {
-    // Clear timer
-    if (this.timerInterval) {
-      this.timerInterval.unsubscribe();
-    }
-
-    // Unsubscribe from all observables
-    this.subscriptions.forEach(sub => sub.unsubscribe());
-
-    // Leave tournament room
-    this.socketService.leaveTournament(this.tournamentId);
   }
 }

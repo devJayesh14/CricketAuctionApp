@@ -4,17 +4,14 @@ import { FormsModule } from '@angular/forms';
 import { IonicModule, ToastController, LoadingController } from '@ionic/angular';
 import { Router, RouterModule } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
+import { AppHeaderComponent } from '../../components/app-header/app-header.component';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule, IonicModule, RouterModule],
+  imports: [CommonModule, FormsModule, IonicModule, RouterModule, AppHeaderComponent],
   template: `
-    <ion-header>
-      <ion-toolbar>
-        <ion-title>Auction Login</ion-title>
-      </ion-toolbar>
-    </ion-header>
+    <app-header title="Auction Login"></app-header>
 
     <ion-content class="ion-padding">
       <div class="login-container">

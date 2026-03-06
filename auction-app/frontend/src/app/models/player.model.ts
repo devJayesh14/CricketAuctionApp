@@ -23,6 +23,7 @@ export interface AuctionPlayer {
 
 export interface PlayerStatistics {
   age?: number;
+  handedness?: 'Righty' | 'Lefty';
   matches?: number;
   totalRuns?: number;
   totalWickets?: number;

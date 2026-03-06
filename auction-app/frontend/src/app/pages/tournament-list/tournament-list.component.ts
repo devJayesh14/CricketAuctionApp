@@ -5,28 +5,14 @@ import { Router, RouterModule } from '@angular/router';
 import { AuctionService } from '../../services/auction.service';
 import { Tournament } from '../../models/tournament.model';
 import { AuthService } from '../../services/auth.service';
+import { AppHeaderComponent } from '../../components/app-header/app-header.component';
 
 @Component({
   selector: 'app-tournament-list',
   standalone: true,
-  imports: [CommonModule, IonicModule, RouterModule],
+  imports: [CommonModule, IonicModule, RouterModule, AppHeaderComponent],
   template: `
-    <ion-header>
-      <ion-toolbar>
-        <ion-title>Tournaments</ion-title>
-        <ion-buttons slot="end">
-          <ion-button (click)="logout()">
-            <ion-icon name="log-out-outline"></ion-icon>
-          </ion-button>
-          <ion-button *ngIf="authService.isSuperAdmin" routerLink="/admin-dashboard">
-            <ion-icon name="settings-outline"></ion-icon>
-          </ion-button>
-          <ion-button *ngIf="authService.isCaptain" routerLink="/captain-dashboard">
-            <ion-icon name="person-outline"></ion-icon>
-          </ion-button>
-        </ion-buttons>
-      </ion-toolbar>
-    </ion-header>
+    <app-header title="Tournaments"></app-header>
 
     <ion-content>
       <ion-refresher slot="fixed" (ionRefresh)="refreshTournaments($event)">

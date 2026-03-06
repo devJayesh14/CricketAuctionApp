@@ -27,6 +27,11 @@ const auctionPlayerSchema = new mongoose.Schema({
   },
   statistics: {
     age: Number,
+    handedness: {
+      type: String,
+      enum: ['Righty', 'Lefty'],
+      required: false
+    },
     matches: Number,
     totalRuns: Number,
     totalWickets: Number,
@@ -63,7 +68,7 @@ const auctionPlayerSchema = new mongoose.Schema({
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: false // Made optional for public registrations
   },
   createdAt: {
     type: Date,

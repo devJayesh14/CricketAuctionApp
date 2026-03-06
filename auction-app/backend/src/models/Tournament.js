@@ -39,6 +39,11 @@ const tournamentSchema = new mongoose.Schema({
     enum: ['SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
     default: 'SCHEDULED'
   },
+  auctionStatus: {
+    type: String,
+    enum: ['NOT_STARTED', 'STARTED', 'PAUSED', 'COMPLETED'],
+    default: 'NOT_STARTED'
+  },
   currentAuctionState: {
     currentPlayerIndex: {
       type: Number,

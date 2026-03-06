@@ -7,6 +7,164 @@ const { validate, schemas } = require('../middleware/validation');
 
 const router = express.Router();
 
+// Auction Control Routes
+router.post('/:id/start-auction', auth, isSuperAdmin, async (req, res) => {
+  try {
+    const tournament = await Tournament.findById(req.params.id);
+    
+    if (!tournament) {
+      return res.status(404).json({ error: 'Tournament not found' });
+    }
+
+    if (tournament.auctionStatus === 'STARTED') {
+      return res.status(400).json({ error: 'Auction already started' });
+    }
+
+    if (tournament.status === 'COMPLETED') {
+      return res.status(400).json({ error: 'Tournament already completed' });
+    }
+
+    // Update tournament status
+    tournament.status = 'IN_PROGRESS';
+    tournament.auctionStatus = 'STARTED';
+    tournament.currentAuctionState.currentPlayerIndex = 0;
+    
+    await tournament.save();
+
+    // Get first player
+    const players = await AuctionPlayer.find({ tournament: tournament._id })
+      .sort({ auctionOrder: 1 });
+    
+    if (players.length === 0) {
+      return res.status(400).json({ error: 'No players in this tournament' });
+    }
+
+    const firstPlayer = players[0];
+    tournament.currentAuctionState.currentPlayerId = firstPlayer._id;
+    await tournament.save();
+
+    // Update first player status
+    firstPlayer.status = 'IN_AUCTION';
+    await firstPlayer.save();
+
+    res.json({
+      message: 'Auction started successfully',
+      tournament,
+      currentPlayer: firstPlayer
+    });
+  } catch (error) {
+    console.error('Start auction error:', error);
+    res.status(500).json({ error: 'Failed to start auction' });
+  }
+});
+
+router.post('/:id/pause-auction', auth, isSuperAdmin, async (req, res) => {
+  try {
+    const tournament = await Tournament.findById(req.params.id);
+    
+    if (!tournament) {
+      return res.status(404).json({ error: 'Tournament not found' });
+    }
+
+    if (tournament.auctionStatus !== 'STARTED') {
+      return res.status(400).json({ error: 'Auction is not running' });
+    }
+
+    tournament.auctionStatus = 'PAUSED';
+    await tournament.save();
+
+    res.json({
+      message: 'Auction paused successfully',
+      tournament
+    });
+  } catch (error) {
+    console.error('Pause auction error:', error);
+    res.status(500).json({ error: 'Failed to pause auction' });
+  }
+});
+
+router.post('/:id/resume-auction', auth, isSuperAdmin, async (req, res) => {
+  try {
+    const tournament = await Tournament.findById(req.params.id);
+    
+    if (!tournament) {
+      return res.status(404).json({ error: 'Tournament not found' });
+    }
+
+    if (tournament.auctionStatus !== 'PAUSED') {
+      return res.status(400).json({ error: 'Auction is not paused' });
+    }
+
+    tournament.auctionStatus = 'STARTED';
+    await tournament.save();
+
+    res.json({
+      message: 'Auction resumed successfully',
+      tournament
+    });
+  } catch (error) {
+    console.error('Resume auction error:', error);
+    res.status(500).json({ error: 'Failed to resume auction' });
+  }
+});
+
+router.post('/:id/next-player', auth, isSuperAdmin, async (req, res) => {
+  try {
+    const tournament = await Tournament.findById(req.params.id);
+    
+    if (!tournament) {
+      return res.status(404).json({ error: 'Tournament not found' });
+    }
+
+    const players = await AuctionPlayer.find({ tournament: tournament._id })
+      .sort({ auctionOrder: 1 });
+    
+    const currentIndex = tournament.currentAuctionState.currentPlayerIndex;
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex >= players.length) {
+      // All players auctioned
+      tournament.auctionStatus = 'COMPLETED';
+      tournament.status = 'COMPLETED';
+      await tournament.save();
+      
+      return res.json({
+        message: 'Auction completed - all players sold',
+        tournament,
+        isCompleted: true
+      });
+    }
+
+    const nextPlayer = players[nextIndex];
+    
+    // Update current player status to AVAILABLE if not sold
+    const currentPlayer = players[currentIndex];
+    if (currentPlayer && currentPlayer.status === 'IN_AUCTION') {
+      currentPlayer.status = 'AVAILABLE';
+      await currentPlayer.save();
+    }
+
+    // Update tournament state
+    tournament.currentAuctionState.currentPlayerIndex = nextIndex;
+    tournament.currentAuctionState.currentPlayerId = nextPlayer._id;
+    await tournament.save();
+
+    // Update next player status
+    nextPlayer.status = 'IN_AUCTION';
+    await nextPlayer.save();
+
+    res.json({
+      message: 'Moved to next player successfully',
+      tournament,
+      currentPlayer: nextPlayer,
+      nextIndex
+    });
+  } catch (error) {
+    console.error('Next player error:', error);
+    res.status(500).json({ error: 'Failed to move to next player' });
+  }
+});
+
 router.get('/', auth, isPlayer, async (req, res) => {
   try {
     let tournaments;

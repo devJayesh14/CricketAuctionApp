@@ -4,28 +4,18 @@ import { FormsModule } from '@angular/forms';
 import { IonicModule, ModalController, AlertController } from '@ionic/angular';
 import { Router, RouterModule } from '@angular/router';
 import { AuctionService } from '../../services/auction.service';
+import { SocketService } from '../../services/socket.service';
 import { Tournament } from '../../models/tournament.model';
 import { AuctionPlayer } from '../../models/player.model';
 import { AuthService } from '../../services/auth.service';
+import { AppHeaderComponent } from '../../components/app-header/app-header.component';
 
 @Component({
   selector: 'app-admin-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, IonicModule, RouterModule],
+  imports: [CommonModule, FormsModule, IonicModule, RouterModule, AppHeaderComponent],
   template: `
-    <ion-header>
-      <ion-toolbar>
-        <ion-title>Admin Dashboard</ion-title>
-        <ion-buttons slot="end">
-          <ion-button (click)="logout()">
-            <ion-icon name="log-out-outline"></ion-icon>
-          </ion-button>
-          <ion-button routerLink="/tournaments">
-            <ion-icon name="list-outline"></ion-icon>
-          </ion-button>
-        </ion-buttons>
-      </ion-toolbar>
-    </ion-header>
+    <app-header title="Admin Dashboard"></app-header>
 
     <ion-content>
       <div class="header-section ion-padding">
@@ -52,6 +42,38 @@ import { AuthService } from '../../services/auth.service';
         </div>
       </div>
 
+      <!-- Player Management Section -->
+      <ion-card class="management-section">
+        <ion-card-header>
+          <ion-card-title>Player Management</ion-card-title>
+          <ion-card-subtitle>Manage players and generate registration links</ion-card-subtitle>
+        </ion-card-header>
+        
+        <ion-card-content>
+          <ion-button expand="block" (click)="goToPlayerManagement()" color="secondary">
+            <ion-icon name="people-outline" slot="start"></ion-icon>
+            Manage Players
+          </ion-button>
+
+          <ion-list class="ion-margin-top">
+            <ion-item *ngFor="let tournament of tournaments" button (click)="managePlayers(tournament._id)">
+              <ion-icon name="trophy-outline" slot="start"></ion-icon>
+              
+              <ion-label>
+                <h3>{{ tournament.name }} - Players</h3>
+                <p>Manage players for this tournament</p>
+              </ion-label>
+
+              <ion-buttons slot="end">
+                <ion-button (click)="managePlayers(tournament._id)" fill="clear" color="secondary">
+                  <ion-icon name="arrow-forward-outline"></ion-icon>
+                </ion-button>
+              </ion-buttons>
+            </ion-item>
+          </ion-list>
+        </ion-card-content>
+      </ion-card>
+
       <!-- Tournament Management -->
       <ion-card class="management-section">
         <ion-card-header>
@@ -64,6 +86,33 @@ import { AuthService } from '../../services/auth.service';
             <ion-icon name="add-outline" slot="start"></ion-icon>
             Create New Tournament
           </ion-button>
+
+          <!-- Auction Controls -->
+          <div class="auction-controls ion-margin-top" *ngIf="tournaments.length > 0">
+            <h4>Auction Controls</h4>
+            <ion-select [(ngModel)]="selectedTournamentId" placeholder="Select Tournament" interface="popover">
+              <ion-select-option *ngFor="let tournament of tournaments" [value]="tournament._id">
+                {{ tournament.name }}
+              </ion-select-option>
+            </ion-select>
+            
+            <div class="control-buttons ion-margin-top">
+              <ion-button (click)="startAuction()" [disabled]="!selectedTournamentId || isAuctionRunning" color="success" expand="block">
+                <ion-icon name="play-outline" slot="start"></ion-icon>
+                Start Auction
+              </ion-button>
+              
+              <ion-button (click)="stopAuction()" [disabled]="!isAuctionRunning" color="danger" expand="block">
+                <ion-icon name="stop-outline" slot="start"></ion-icon>
+                Stop Auction
+              </ion-button>
+            </div>
+            
+            <div class="auction-status ion-margin-top" *ngIf="selectedTournamentId">
+              <p><strong>Status:</strong> {{ isAuctionRunning ? 'Running' : 'Stopped' }}</p>
+              <p><strong>Selected:</strong> {{ getSelectedTournamentName() }}</p>
+            </div>
+          </div>
 
           <ion-list class="ion-margin-top">
             <ion-item *ngFor="let tournament of tournaments" button (click)="editTournament(tournament)">
@@ -262,6 +311,40 @@ import { AuthService } from '../../services/auth.service';
       padding: 2rem;
       color: var(--ion-color-medium);
     }
+
+    .auction-controls {
+      background: var(--ion-color-light);
+      padding: 1rem;
+      border-radius: 8px;
+      margin-top: 1rem;
+    }
+
+    .auction-controls h4 {
+      margin: 0 0 1rem 0;
+      color: var(--ion-color-dark);
+    }
+
+    .control-buttons {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .control-buttons ion-button {
+      flex: 1;
+    }
+
+    .auction-status {
+      background: var(--ion-color-primary);
+      color: white;
+      padding: 0.75rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+
+    .auction-status p {
+      margin: 0.25rem 0;
+    }
   `]
 })
 export class AdminDashboardComponent implements OnInit {
@@ -273,6 +356,10 @@ export class AdminDashboardComponent implements OnInit {
   showTournamentModal: boolean = false;
   editingTournament: Tournament | null = null;
   isSaving: boolean = false;
+
+  // Auction control properties
+  selectedTournamentId: string = '';
+  isAuctionRunning: boolean = false;
 
   tournamentForm = {
     name: '',
@@ -287,7 +374,8 @@ export class AdminDashboardComponent implements OnInit {
     private auctionService: AuctionService,
     private authService: AuthService,
     private router: Router,
-    private alertController: AlertController
+    private alertController: AlertController,
+    private socketService: SocketService
   ) {}
 
   ngOnInit() {
@@ -444,6 +532,15 @@ export class AdminDashboardComponent implements OnInit {
     this.router.navigate(['/manage-players', tournamentId]);
   }
 
+  goToPlayerManagement() {
+    if (this.tournaments.length > 0) {
+      // Navigate to first tournament's player management if no specific tournament selected
+      this.router.navigate(['/manage-players', this.tournaments[0]._id]);
+    } else {
+      this.showAlert('No Tournaments', 'Please create a tournament first to manage players.');
+    }
+  }
+
   async showAlert(header: string, message: string) {
     const alert = await this.alertController.create({
       header,
@@ -455,5 +552,31 @@ export class AdminDashboardComponent implements OnInit {
 
   logout() {
     this.authService.logout();
+  }
+
+  // Auction control methods
+  startAuction() {
+    if (!this.selectedTournamentId) return;
+    
+    this.socketService.connect();
+    this.socketService.joinTournament(this.selectedTournamentId);
+    this.socketService.startAuction(this.selectedTournamentId);
+    this.isAuctionRunning = true;
+    
+    this.showAlert('Auction Started', `Auction for ${this.getSelectedTournamentName()} has been started.`);
+  }
+
+  stopAuction() {
+    if (!this.selectedTournamentId) return;
+    
+    this.socketService.disconnect();
+    this.isAuctionRunning = false;
+    
+    this.showAlert('Auction Stopped', `Auction for ${this.getSelectedTournamentName()} has been stopped.`);
+  }
+
+  getSelectedTournamentName(): string {
+    const tournament = this.tournaments.find(t => t._id === this.selectedTournamentId);
+    return tournament ? tournament.name : '';
   }
 }
